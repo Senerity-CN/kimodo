@@ -158,3 +158,8 @@ onelogger.err
 
 # deploy files
 /helm-library
+
+/text_encoders
+
+*.npz
+*.csv
