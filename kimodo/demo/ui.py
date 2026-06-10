@@ -697,6 +697,28 @@ def create_gui(
                     "Load Motion",
                     hint="Load the selected motion",
                 )
+            with client.gui.add_folder("Browse Folder", expand_by_default=True):
+                gui_browse_dir_text = client.gui.add_text(
+                    "Directory",
+                    initial_value="",
+                    hint="Path to a folder containing NPZ/BVH files (scans recursively)",
+                )
+                gui_browse_scan_button = client.gui.add_button("Scan")
+                _browse_files: list[str] = []
+                _browse_idx: list[int] = [0]
+                gui_browse_dropdown = client.gui.add_dropdown(
+                    "File",
+                    options=["(scan a folder first)"],
+                    initial_value="(scan a folder first)",
+                )
+                gui_browse_label = client.gui.add_markdown("*0 / 0*")
+                gui_browse_prev_button = client.gui.add_button("◀ Prev", color="gray")
+                gui_browse_next_button = client.gui.add_button("Next ▶", color="gray")
+                gui_browse_delete_button = client.gui.add_button(
+                    "✖ Delete Current",
+                    color="red",
+                    hint="Delete the current NPZ+BVH from disk (irreversible)",
+                )
             with client.gui.add_folder("Constraints", expand_by_default=False):
                 gui_save_constraints_path_text = client.gui.add_text(
                     "Save Path", initial_value="output_constraints.json"
@@ -984,6 +1006,137 @@ def create_gui(
                     loading_notif.with_close_button = True
                     loading_notif.auto_close_seconds = 10.0
                     loading_notif.color = "red"
+
+            # ── Browse Folder callbacks ──
+
+            def _browse_scan_dir(scan_dir: str) -> list[str]:
+                """Recursively find NPZ files and return sorted paths."""
+                found = []
+                for root, _dirs, files in os.walk(scan_dir):
+                    for f in sorted(files):
+                        if f.endswith(".npz"):
+                            found.append(os.path.join(root, f))
+                found.sort()
+                return found
+
+            def _browse_update_ui():
+                """Sync dropdown / label to current _browse_files / _browse_idx."""
+                if not _browse_files:
+                    gui_browse_dropdown.options = ["(no files found)"]
+                    gui_browse_dropdown.value = "(no files found)"
+                    gui_browse_label.content = "*0 / 0*"
+                    return
+                short_names = [os.path.basename(p) for p in _browse_files]
+                gui_browse_dropdown.options = short_names
+                idx = _browse_idx[0]
+                gui_browse_dropdown.value = short_names[idx]
+                gui_browse_label.content = f"**{idx + 1} / {len(_browse_files)}**"
+
+            def _browse_load_current(event_client):
+                """Load the file at _browse_idx[0] and auto-play."""
+                if not _browse_files:
+                    return
+                path = _browse_files[_browse_idx[0]]
+                loading_notif = event_client.add_notification(
+                    title="Loading...",
+                    body=os.path.basename(path),
+                    loading=True,
+                    with_close_button=False,
+                )
+                try:
+                    load_motion(event_client, path)
+                    session = demo.client_sessions[event_client.client_id]
+                    session.playing = True
+                    loading_notif.title = os.path.basename(path)
+                    loading_notif.body = f"{session.max_frame_idx + 1} frames, {session.cur_duration:.2f}s"
+                    loading_notif.loading = False
+                    loading_notif.with_close_button = True
+                    loading_notif.auto_close_seconds = 3.0
+                    loading_notif.color = "green"
+                except Exception as e:
+                    loading_notif.title = "Failed!"
+                    loading_notif.body = str(e)
+                    loading_notif.loading = False
+                    loading_notif.with_close_button = True
+                    loading_notif.auto_close_seconds = 10.0
+                    loading_notif.color = "red"
+
+            @gui_browse_scan_button.on_click
+            def _(event: viser.GuiEvent) -> None:
+                scan_dir = gui_browse_dir_text.value.strip()
+                if not scan_dir or not os.path.isdir(scan_dir):
+                    event.client.add_notification(
+                        title="Invalid directory",
+                        body=scan_dir or "(empty)",
+                        auto_close_seconds=5.0,
+                        color="red",
+                    )
+                    return
+                _browse_files.clear()
+                _browse_files.extend(_browse_scan_dir(scan_dir))
+                _browse_idx[0] = 0
+                _browse_update_ui()
+                event.client.add_notification(
+                    title="Scan complete",
+                    body=f"Found {len(_browse_files)} motion files",
+                    auto_close_seconds=3.0,
+                    color="green" if _browse_files else "yellow",
+                )
+                if _browse_files:
+                    _browse_load_current(event.client)
+
+            @gui_browse_dropdown.on_update
+            def _(event: viser.GuiEvent) -> None:
+                if event.client is None:
+                    return
+                val = gui_browse_dropdown.value
+                short_names = [os.path.basename(p) for p in _browse_files]
+                if val in short_names:
+                    _browse_idx[0] = short_names.index(val)
+                    gui_browse_label.content = f"**{_browse_idx[0] + 1} / {len(_browse_files)}**"
+                    _browse_load_current(event.client)
+
+            @gui_browse_prev_button.on_click
+            def _(event: viser.GuiEvent) -> None:
+                if not _browse_files:
+                    return
+                _browse_idx[0] = (_browse_idx[0] - 1) % len(_browse_files)
+                _browse_update_ui()
+                _browse_load_current(event.client)
+
+            @gui_browse_next_button.on_click
+            def _(event: viser.GuiEvent) -> None:
+                if not _browse_files:
+                    return
+                _browse_idx[0] = (_browse_idx[0] + 1) % len(_browse_files)
+                _browse_update_ui()
+                _browse_load_current(event.client)
+
+            @gui_browse_delete_button.on_click
+            def _(event: viser.GuiEvent) -> None:
+                if not _browse_files:
+                    return
+                path = _browse_files[_browse_idx[0]]
+                basename = os.path.basename(path)
+                stem = os.path.splitext(path)[0]
+                deleted = []
+                for ext in (".npz", ".bvh"):
+                    p = stem + ext
+                    if os.path.isfile(p):
+                        os.remove(p)
+                        deleted.append(os.path.basename(p))
+                _browse_files.pop(_browse_idx[0])
+                if _browse_idx[0] >= len(_browse_files) and _browse_files:
+                    _browse_idx[0] = len(_browse_files) - 1
+                _browse_update_ui()
+                event.client.add_notification(
+                    title="Deleted",
+                    body=", ".join(deleted),
+                    auto_close_seconds=3.0,
+                    color="yellow",
+                )
+                if _browse_files:
+                    _browse_load_current(event.client)
 
             def save_constraints(client, save_path):
                 session = demo.client_sessions[client.client_id]

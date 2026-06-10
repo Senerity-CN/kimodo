@@ -9,7 +9,7 @@ import numpy as np
 
 from kimodo.assets import skeleton_asset_path
 
-qpos = np.loadtxt("motion.csv", delimiter=",")
+qpos = np.loadtxt("outputs.csv", delimiter=",")
 model = mujoco.MjModel.from_xml_path(str(skeleton_asset_path("g1skel34", "xml", "g1.xml")))
 data = mujoco.MjData(model)
 
