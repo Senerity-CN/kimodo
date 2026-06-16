@@ -706,6 +706,7 @@ def create_gui(
                 gui_browse_scan_button = client.gui.add_button("Scan")
                 _browse_files: list[str] = []
                 _browse_idx: list[int] = [0]
+                _browse_scan_root: list[str] = [""]  # remember scan root for relative paths
                 gui_browse_dropdown = client.gui.add_dropdown(
                     "File",
                     options=["(scan a folder first)"],
@@ -1019,6 +1020,13 @@ def create_gui(
                 found.sort()
                 return found
 
+            def _browse_display_names() -> list[str]:
+                """Return unique display names (relative to scan root) for dropdown."""
+                root = _browse_scan_root[0]
+                if root:
+                    return [os.path.relpath(p, root) for p in _browse_files]
+                return [os.path.basename(p) for p in _browse_files]
+
             def _browse_update_ui():
                 """Sync dropdown / label to current _browse_files / _browse_idx."""
                 if not _browse_files:
@@ -1026,10 +1034,10 @@ def create_gui(
                     gui_browse_dropdown.value = "(no files found)"
                     gui_browse_label.content = "*0 / 0*"
                     return
-                short_names = [os.path.basename(p) for p in _browse_files]
-                gui_browse_dropdown.options = short_names
+                display_names = _browse_display_names()
+                gui_browse_dropdown.options = display_names
                 idx = _browse_idx[0]
-                gui_browse_dropdown.value = short_names[idx]
+                gui_browse_dropdown.value = display_names[idx]
                 gui_browse_label.content = f"**{idx + 1} / {len(_browse_files)}**"
 
             def _browse_load_current(event_client):
@@ -1074,6 +1082,7 @@ def create_gui(
                     return
                 _browse_files.clear()
                 _browse_files.extend(_browse_scan_dir(scan_dir))
+                _browse_scan_root[0] = scan_dir
                 _browse_idx[0] = 0
                 _browse_update_ui()
                 event.client.add_notification(
@@ -1090,9 +1099,9 @@ def create_gui(
                 if event.client is None:
                     return
                 val = gui_browse_dropdown.value
-                short_names = [os.path.basename(p) for p in _browse_files]
-                if val in short_names:
-                    _browse_idx[0] = short_names.index(val)
+                display_names = _browse_display_names()
+                if val in display_names:
+                    _browse_idx[0] = display_names.index(val)
                     gui_browse_label.content = f"**{_browse_idx[0] + 1} / {len(_browse_files)}**"
                     _browse_load_current(event.client)
 
